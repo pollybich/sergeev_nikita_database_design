@@ -15,7 +15,7 @@
 | order | order_id uuid | Курьер, клиент, адрес, ресторан, даты, order_amount, комиссия, итог, статусы, описание |
 | payment | payment_id uuid | order_id, type enum, amount numeric(14,2), transaction_ref varchar(100), timestamp, status enum |
 | order_structure | order_id + product_id | quantity numeric(10,3), unit_price numeric(12,2) |
-| review | review_id uuid | client_id, order_id, entity_id, entity_type enum, текст, URL, rating numeric(3,2), timestamp |
+| review | review_id uuid | order_id, entity_id, entity_type enum, текст, URL, rating numeric(3,2), timestamp |
 
 ```mermaid
 erDiagram
@@ -32,7 +32,8 @@ erDiagram
     product ||--o{ order_structure : purchases
     order ||--o{ payment : attempts
     order ||--o{ review : feedback
-    client ||--o{ review : writes
 ```
 
 Ограничения для полиморфного объекта отзыва и контролируемые вычисляемые поля разобраны в [constraints.md](constraints.md). Столбцов для городов, карт, ФИО клиентов, скидок и возвратов нет.
+
+Автор отзыва выводится по цепочке `review.order_id → order.client_id → client`. Представление `review_with_client` показывает `client_id` и поддерживает INSERT/UPDATE/DELETE с проверкой автора; повторное хранение клиента в `review` исключено при нормализации.

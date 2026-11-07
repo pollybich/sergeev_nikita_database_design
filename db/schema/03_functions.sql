@@ -25,7 +25,7 @@ END $$;
 CREATE FUNCTION get_statistic() RETURNS TABLE (
     restaurant_name varchar, best_product_name varchar, total_amount numeric,
     avg_amount numeric, best_user varchar)
-LANGUAGE sql STABLE SET search_path = sergeev_food, exts, pg_catalog AS $$
+LANGUAGE sql VOLATILE SET search_path = sergeev_food, exts, pg_catalog AS $$
     WITH delivered AS MATERIALIZED (
         SELECT order_id, restaurant_id, client_id, total_amount FROM "order" WHERE status = 'доставлен'
     ), amounts AS (

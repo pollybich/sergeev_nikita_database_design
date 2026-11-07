@@ -111,7 +111,6 @@ CREATE TABLE order_structure (
 );
 CREATE TABLE review (
     review_id uuid PRIMARY KEY DEFAULT exts.uuid_generate_v4(),
-    client_id uuid NOT NULL REFERENCES client,
     review_timestamp timestamp NOT NULL DEFAULT localtimestamp,
     entity_id uuid NOT NULL,
     entity_type entity_type NOT NULL,
@@ -127,3 +126,8 @@ CREATE INDEX order_structure_product ON order_structure(product_id);
 CREATE INDEX payment_order ON payment(order_id);
 CREATE INDEX review_entity ON review(entity_type, entity_id);
 CREATE INDEX review_order ON review(order_id);
+
+CREATE VIEW review_with_client AS
+SELECT r.review_id, o.client_id, r.review_timestamp, r.entity_id, r.entity_type,
+    r.order_id, r.description, r.photo_url, r.rating
+FROM review r JOIN "order" o USING(order_id);

@@ -68,7 +68,7 @@ BEGIN
                 'tx_' || exts.uuid_generate_v4(), least(ts+interval '1 minute',localtimestamp),
                 (enum_range(NULL::payment_status))[1]);
             v_entity := (enum_range(NULL::entity_type))[1+(k-1)%3];
-            INSERT INTO review(client_id, review_timestamp, entity_id, entity_type, order_id, description, photo_url, rating)
+            INSERT INTO review_with_client(client_id, review_timestamp, entity_id, entity_type, order_id, description, photo_url, rating)
             VALUES(clients[i], localtimestamp, CASE v_entity WHEN 'блюдо' THEN v_product
                 WHEN 'ресторан' THEN restaurants[i] ELSE v_order END, v_entity, v_order,
                 'Отзыв о заказе', CASE WHEN k%2 = 0 THEN 'https://example.org/review/' || v_order || '.jpg' END,
@@ -95,16 +95,18 @@ END $$;
 CREATE PROCEDURE erase_test_data() LANGUAGE plpgsql
 SET search_path = sergeev_food, exts, pg_catalog AS $$
 BEGIN
-    DELETE FROM review;
-    DELETE FROM payment;
-    DELETE FROM order_structure;
-    DELETE FROM "order";
-    DELETE FROM courier_pay;
-    DELETE FROM product;
-    DELETE FROM product_category;
-    DELETE FROM restaurant;
-    DELETE FROM client_address;
-    DELETE FROM client;
-    DELETE FROM courier;
+    -- Один SQL-оператор: немедленные FK/constraint-триггеры проверяют
+    -- конечное пустое состояние, а режим ограничений вызывающего кода сохранён.
+    WITH deleted_reviews AS (DELETE FROM review),
+         deleted_payments AS (DELETE FROM payment),
+         deleted_positions AS (DELETE FROM order_structure),
+         deleted_orders AS (DELETE FROM "order"),
+         deleted_salaries AS (DELETE FROM courier_pay),
+         deleted_products AS (DELETE FROM product),
+         deleted_categories AS (DELETE FROM product_category),
+         deleted_restaurants AS (DELETE FROM restaurant),
+         deleted_links AS (DELETE FROM client_address),
+         deleted_clients AS (DELETE FROM client),
+         deleted_couriers AS (DELETE FROM courier)
     DELETE FROM address;
 END $$;

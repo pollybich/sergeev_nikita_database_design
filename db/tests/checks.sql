@@ -27,12 +27,25 @@ SELECT pg_temp.assert((SELECT count(*) = 8 FROM pg_type WHERE typnamespace = 'se
 SELECT pg_temp.assert(NOT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'sergeev_food'
     AND column_name LIKE '%\_id' ESCAPE '\' AND data_type <> 'uuid'), 'все ID uuid');
 SELECT pg_temp.assert((SELECT count(*) >= 15 FROM pg_constraint WHERE connamespace = 'sergeev_food'::regnamespace AND contype = 'f'), 'FK из ERD');
+SELECT pg_temp.assert((SELECT array_agg(column_name::text ORDER BY ordinal_position) = ARRAY[
+    'year_month','sum_no_commission','sum_with_commission','commission','prev_commission','commission_diff','courier_pay','net_profit']
+    FROM information_schema.columns WHERE table_schema='sergeev_food' AND table_name='how_much_money')
+    AND (SELECT bool_and(data_type=CASE WHEN column_name='year_month' THEN 'text' ELSE 'numeric' END)
+    FROM information_schema.columns WHERE table_schema='sergeev_food' AND table_name='how_much_money'),
+    'имена и типы колонок how_much_money');
+SELECT pg_temp.assert((SELECT proargnames=ARRAY['restaurant_name','best_product_name','total_amount','avg_amount','best_user']
+    FROM pg_proc WHERE oid='sergeev_food.get_statistic()'::regprocedure), 'имена колонок get_statistic');
+SELECT pg_temp.assert(NOT EXISTS(SELECT FROM information_schema.columns WHERE table_schema='sergeev_food'
+    AND table_name='review' AND column_name='client_id') AND EXISTS(SELECT FROM information_schema.views
+    WHERE table_schema='sergeev_food' AND table_name='review_with_client'), 'автор отзыва выведен через заказ без дублирования');
 SELECT pg_temp.assert(has_schema_privilege(current_user, 'sergeev_food', 'USAGE,CREATE')
     AND has_schema_privilege(current_user, 'exts', 'USAGE'), 'права на схемы');
 SELECT pg_temp.assert((SELECT count(*) = 12 FROM pg_catalog.pg_tables WHERE schemaname = 'sergeev_food'), 'чтение pg_catalog');
 SELECT pg_temp.assert((SELECT extnamespace = 'exts'::regnamespace FROM pg_extension WHERE extname = 'uuid-ossp'), 'uuid-ossp в exts');
 CALL erase_test_data();
 CALL erase_test_data();
+SELECT pg_temp.assert((SELECT count(*)=0 FROM how_much_money)
+    AND (SELECT count(*)=0 FROM get_statistic()), 'отчёты на пустой схеме');
 CALL insert_test_data(10);
 SET CONSTRAINTS ALL IMMEDIATE;
 SET CONSTRAINTS ALL DEFERRED;
@@ -92,18 +105,18 @@ SELECT pg_temp.reject($q$UPDATE payment SET amount=amount+1$q$, '23514');
 SELECT pg_temp.reject($q$INSERT INTO payment(order_id,type,amount,transaction_ref,status)
     SELECT order_id,type,amount,exts.uuid_generate_v4()::text,'успех' FROM payment LIMIT 1$q$, '23505');
 SELECT pg_temp.reject($q$DELETE FROM order_structure$q$, '23514');
-SELECT pg_temp.reject($q$UPDATE review SET client_id=exts.uuid_generate_v4()$q$, '23503');
+SELECT pg_temp.reject($q$UPDATE review_with_client SET client_id=exts.uuid_generate_v4()$q$, '23503');
 SELECT pg_temp.reject($q$UPDATE review SET entity_id=exts.uuid_generate_v4()$q$, '23514');
 SELECT pg_temp.reject($q$UPDATE product SET restaurant_id=(SELECT restaurant_id FROM restaurant WHERE restaurant_id<>product.restaurant_id LIMIT 1)$q$, '23514');
-SELECT pg_temp.reject($q$UPDATE review SET client_id=(SELECT client_id FROM client WHERE client_id<>review.client_id LIMIT 1)$q$, '23514');
+SELECT pg_temp.reject($q$UPDATE review_with_client SET client_id=(SELECT client_id FROM client WHERE client_id<>review_with_client.client_id LIMIT 1)$q$, '23514');
 SELECT pg_temp.reject($q$UPDATE "order" SET address_id=(SELECT ca.address_id FROM client_address ca WHERE ca.client_id<>"order".client_id LIMIT 1)$q$, '23503');
 SELECT pg_temp.reject($q$UPDATE review SET rating=0$q$, '23514');
 SELECT pg_temp.reject($q$UPDATE order_structure SET quantity=0$q$, '23514');
 SELECT pg_temp.reject($q$UPDATE product SET price='NaN'$q$, '23514');
 SELECT pg_temp.reject($q$UPDATE "order" SET status='доставлен',delivery_timestamp=NULL$q$, '23514');
 SELECT pg_temp.reject($q$INSERT INTO client_address SELECT * FROM client_address LIMIT 1$q$, '23505');
-SELECT pg_temp.reject($q$INSERT INTO review(client_id,entity_id,entity_type,order_id,description,rating)
-    SELECT client_id,entity_id,entity_type,order_id,description,rating FROM review LIMIT 1$q$, '23505');
+SELECT pg_temp.reject($q$INSERT INTO review_with_client(client_id,entity_id,entity_type,order_id,description,rating)
+    SELECT client_id,entity_id,entity_type,order_id,description,rating FROM review_with_client LIMIT 1$q$, '23505');
 DO $$
 DECLARE i int;
 BEGIN
@@ -147,7 +160,7 @@ BEGIN
         INSERT INTO "order"(courier_id,client_id,address_id,restaurant_id,order_amount,description)
         VALUES(base.courier_id,base.client_id,base.address_id,base.restaurant_id,1000,'Проверка рейтингов') RETURNING order_id INTO oid;
         INSERT INTO order_structure VALUES(oid,pid,1,1000),(oid,other_pid,1,0);
-        INSERT INTO review(client_id,entity_id,entity_type,order_id,description,rating)
+        INSERT INTO review_with_client(client_id,entity_id,entity_type,order_id,description,rating)
         VALUES(base.client_id,pid,'блюдо',oid,'Оценка',i+2) RETURNING review_id INTO rid;
         ids := array_append(ids,rid);
     END LOOP;
@@ -162,6 +175,10 @@ BEGIN
         AND (SELECT rating=3 FROM restaurant WHERE restaurant_id=base.restaurant_id), 'смена типа отзыва');
     UPDATE review SET rating=2 WHERE review_id=ids[3];
     PERFORM pg_temp.assert((SELECT rating=2 FROM product WHERE product_id=pid), 'изменение оценки');
+    UPDATE review_with_client SET rating=4 WHERE review_id=ids[3];
+    PERFORM pg_temp.assert((SELECT rating=4 FROM product WHERE product_id=pid), 'UPDATE через review_with_client');
+    DELETE FROM review_with_client WHERE review_id=ids[3];
+    PERFORM pg_temp.assert((SELECT rating IS NULL FROM product WHERE product_id=pid), 'DELETE через review_with_client');
     DELETE FROM review;
     PERFORM pg_temp.assert((SELECT rating IS NULL FROM product WHERE product_id=pid)
         AND (SELECT rating IS NULL FROM restaurant WHERE restaurant_id=base.restaurant_id), 'нет отзывов -> NULL');
@@ -266,6 +283,24 @@ END $$;
 SET CONSTRAINTS ALL IMMEDIATE;
 SET CONSTRAINTS ALL DEFERRED;
 CALL erase_test_data();
+CALL insert_test_data(10);
+SET CONSTRAINTS ALL IMMEDIATE;
+DO $$
+DECLARE p payment;
+BEGIN
+    SELECT * INTO p FROM payment LIMIT 1;
+    UPDATE payment SET status='ошибка' WHERE payment_id=p.payment_id;
+    PERFORM pg_temp.assert((SELECT pay_status='ошибка' FROM "order" WHERE order_id=p.order_id),
+        'изменение оплаты при IMMEDIATE');
+    UPDATE payment SET status='успех' WHERE payment_id=p.payment_id;
+    PERFORM pg_temp.assert((SELECT pay_status='оплачен' FROM "order" WHERE order_id=p.order_id),
+        'успешная оплата при IMMEDIATE');
+END $$;
+CALL erase_test_data();
+CALL erase_test_data();
+SELECT pg_temp.assert((SELECT count(*)=0 FROM "order") AND (SELECT count(*)=0 FROM client),
+    'очистка при IMMEDIATE');
+SET CONSTRAINTS ALL DEFERRED;
 CALL insert_test_data(10);
 SET CONSTRAINTS ALL IMMEDIATE;
 SELECT pg_temp.assert((SELECT count(*)=50 FROM "order"), 'повторная генерация после очистки');

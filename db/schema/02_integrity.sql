@@ -30,7 +30,6 @@ BEGIN
     END IF;
     IF EXISTS (
         SELECT FROM review r WHERE r.order_id = p_id AND (
-            r.client_id <> o.client_id OR
             (r.entity_type = 'заказ' AND r.entity_id <> p_id) OR
             (r.entity_type = 'ресторан' AND r.entity_id <> o.restaurant_id) OR
             (r.entity_type = 'блюдо' AND NOT EXISTS (
@@ -50,7 +49,7 @@ CREATE CONSTRAINT TRIGGER order_integrity AFTER INSERT OR UPDATE ON "order"
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION order_integrity();
 CREATE CONSTRAINT TRIGGER structure_integrity AFTER INSERT OR UPDATE OR DELETE ON order_structure
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION order_integrity();
-CREATE CONSTRAINT TRIGGER payment_integrity AFTER INSERT OR UPDATE OR DELETE ON payment
+CREATE CONSTRAINT TRIGGER z_payment_integrity AFTER INSERT OR UPDATE OR DELETE ON payment
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION order_integrity();
 CREATE CONSTRAINT TRIGGER review_integrity AFTER INSERT OR UPDATE OR DELETE ON review
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION order_integrity();
@@ -137,3 +136,42 @@ CREATE TRIGGER payment_lock BEFORE INSERT OR UPDATE OR DELETE ON payment
     FOR EACH ROW EXECUTE FUNCTION lock_order_children();
 CREATE TRIGGER review_lock BEFORE INSERT OR UPDATE OR DELETE ON review
     FOR EACH ROW EXECUTE FUNCTION lock_order_children();
+
+-- Автор отзыва выводится из заказа; в таблице review нет зависимости
+-- review_id -> order_id -> client_id. Представление проверяет явного автора.
+CREATE FUNCTION write_review_with_client() RETURNS trigger LANGUAGE plpgsql
+SET search_path = sergeev_food, exts, pg_catalog AS $$
+DECLARE owner_id uuid;
+BEGIN
+    IF TG_OP='DELETE' THEN
+        DELETE FROM review WHERE review_id=OLD.review_id;
+        RETURN OLD;
+    END IF;
+    IF NEW.client_id IS NULL THEN
+        RAISE EXCEPTION 'Укажите автора отзыва' USING ERRCODE='23502';
+    END IF;
+    IF NOT EXISTS(SELECT FROM client WHERE client_id=NEW.client_id) THEN
+        RAISE EXCEPTION 'Клиент не существует' USING ERRCODE='23503';
+    END IF;
+    SELECT client_id INTO owner_id FROM "order" WHERE order_id=NEW.order_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Заказ не существует' USING ERRCODE='23503';
+    END IF;
+    IF NEW.client_id<>owner_id THEN
+        RAISE EXCEPTION 'Можно оставить отзыв только на свой заказ' USING ERRCODE='23514';
+    END IF;
+    IF TG_OP='INSERT' THEN
+        INSERT INTO review(review_id,review_timestamp,entity_id,entity_type,order_id,description,photo_url,rating)
+        VALUES(coalesce(NEW.review_id,exts.uuid_generate_v4()),coalesce(NEW.review_timestamp,localtimestamp),
+            NEW.entity_id,NEW.entity_type,NEW.order_id,NEW.description,NEW.photo_url,NEW.rating)
+        RETURNING review_id,review_timestamp INTO NEW.review_id,NEW.review_timestamp;
+    ELSE
+        UPDATE review SET review_id=NEW.review_id,review_timestamp=NEW.review_timestamp,
+            entity_id=NEW.entity_id,entity_type=NEW.entity_type,order_id=NEW.order_id,
+            description=NEW.description,photo_url=NEW.photo_url,rating=NEW.rating
+        WHERE review_id=OLD.review_id;
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER write_review_with_client INSTEAD OF INSERT OR UPDATE OR DELETE ON review_with_client
+    FOR EACH ROW EXECUTE FUNCTION write_review_with_client();
