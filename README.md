@@ -1,25 +1,20 @@
 # FoodExpress — Сергеев Никита
 
-PostgreSQL 17, схема `sergeev_food`. Выполнены FOOD-101–FOOD-110.
+PostgreSQL 17, схема `sergeev_food`.
 
-- [SQL](db/schema/)
-- [Обоснование ограничений](db/constraints.md)
-- [Логическая модель](db/model.md)
-- [Протокол проверок](db/tests.md)
-- [Резервная копия](db/foodexpress_sergeev.backup)
-- [Исходное задание](https://github.com/NKhashchanov/total_designing_db_2026)
+[SQL](db/schema/) · [Ограничения](db/constraints.md) · [Модель](db/model.md) · [Проверки](db/tests.md) · [Архив](db/foodexpress_sergeev.backup)
 
 ## Установка
 
-В новой БД сначала подготовить расширение; если `exts.uuid_generate_v4()` уже есть, первый шаг пропустить:
+В пустой БД выполнить:
 
 ```sh
 psql -U postgres -d foodexpress -v ON_ERROR_STOP=1 -f db/bootstrap.sql
 psql -U postgres -d foodexpress -v ON_ERROR_STOP=1 -f db/install.sql
-psql -U inspector -d foodexpress -v ON_ERROR_STOP=1 -f db/tests/checks.sql
 ```
 
-Пароль `inspector` по условию: `NetoSQL2025`. Скрипты установки запускаются один раз на пустой схеме. `grants.sql` можно запускать повторно.
+Если `exts.uuid_generate_v4()` уже существует, `bootstrap.sql` пропустить.
+Пароль `inspector`: `NetoSQL2025`.
 
 ## Восстановление
 
@@ -27,19 +22,20 @@ psql -U inspector -d foodexpress -v ON_ERROR_STOP=1 -f db/tests/checks.sql
 psql -U postgres -d foodexpress -v ON_ERROR_STOP=1 -f db/bootstrap.sql
 pg_restore -U postgres -d foodexpress --no-owner --exit-on-error db/foodexpress_sergeev.backup
 psql -U postgres -d foodexpress -v ON_ERROR_STOP=1 -f db/schema/grants.sql
-psql -U inspector -d foodexpress -v ON_ERROR_STOP=1 -f db/tests/checks.sql
 ```
 
-Архив содержит только схему `sergeev_food`, без данных, роли и расширения. После восстановления данные создаются `CALL sergeev_food.insert_test_data(10);`. Архив сделан PostgreSQL 17; восстанавливать в PostgreSQL 17 или новее.
+Архив содержит только `sergeev_food`, без данных. Требуется PostgreSQL 17+.
+Данные: `CALL sergeev_food.insert_test_data(10);`.
 
-## Полная проверка через Docker
+## Проверки
 
 ```sh
+psql -U inspector -d foodexpress -v ON_ERROR_STOP=1 -f db/tests/checks.sql
+# Или установка, тесты и восстановление во временном Docker-контейнере:
 bash db/test.sh
 ```
 
-Скрипт создаёт временный PostgreSQL без опубликованных портов, устанавливает схему, проверяет её под `inspector`, делает архив, восстанавливает в отдельную БД и повторяет проверки. Архив обновляется после успешной проверки. Тесты выполняются в транзакции с `ROLLBACK`; логи сохраняются в `/tmp/food-check.*`.
+Тесты откатываются через `ROLLBACK`; логи — `/tmp/food-check.*`.
 
-При добавлении заказа вручную заказ, позиции и платежи записываются в одной транзакции. У позиции обязательно указывается `unit_price` — цена на момент покупки.
-
-Отзыв с явным автором записывается через `sergeev_food.review_with_client` (поля `client_id`, `order_id`, `entity_type`, `entity_id`, `rating`, `description` и необязательная фотография). В физической таблице `review` клиент не дублируется и определяется через заказ. Это отличие логической модели от исходной концептуальной ERD.
+Заказ и позиции записываются в одной транзакции. `order_structure.unit_price` — цена на момент покупки.
+Отзывы с `client_id` записываются через `review_with_client`: в таблице `review` автор определяется через заказ.
